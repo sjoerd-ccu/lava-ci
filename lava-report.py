@@ -528,14 +528,167 @@ def boot_report(args):
                 cmd = 'cat %s | sendmail -t' % os.path.join(report_directory, dt_self_test)
                 subprocess.check_output(cmd, shell=True)
 
+def test_report(args):
+    connection, jobs, duration =  parse_json(args.test)
+    results_directory = os.getcwd() + '/results'
+    mkdir(results_directory)
+    for job_id in jobs:
+        # Init
+        test_meta = {}
+        test_cases = []
+        api_url = None
+        arch = None
+        board_instance = None
+        boot_retries = 0
+        kernel_defconfig_full = None
+        kernel_defconfig = None
+        kernel_defconfig_base = None
+        kernel_version = None
+        device_tree = None
+        kernel_endian = None
+        kernel_tree = None
+        kernel_image = None
+        kernel_addr = None
+        initrd_addr = None
+        dtb_addr = None
+        dtb_append = None
+        fastboot = None
+        fastboot_cmd = None
+        test_plan = None
+        job_file = ''
+        dt_test = None
+        dt_test_result = None
+        dt_tests_passed = None
+        dt_tests_failed = None
+        board_offline = False
+        kernel_boot_time = None
+        boot_failure_reason = None
+        test_plan = None
+        test_set = None
+        test_suite = None
+        test_type = None
+        test_vcs_commit = None
+        test_def_uri = None
+        print 'Job ID: %s' % job_id
+        job_details = connection.scheduler.job_details(job_id)
+        if job_details['requested_device_type_id']:
+            device_type = job_details['requested_device_type_id']
+            platform_name = device_map[device_type][0]
+        if job_details['description']:
+            job_name = job_details['description']
+        result = jobs[job_id]['result']
+        bundle = jobs[job_id]['bundle']
+        # Retrieve bundle
+        if bundle is not None:
+            json_bundle = connection.dashboard.get(bundle)
+            bundle_data = json.loads(json_bundle['content'])
+            # Get the boot data from LAVA
+            for test_results in bundle_data['test_runs']:
+                # Check for the LAVA test
+                if test_results['test_id'] != 'lava':
+                    if 'testdef_metadata' in test_results:
+                        if 'url' in test_results['testdef_metadata']:
+                            test_def_uri = test_results['testdef_metadata']['url']
+                        if 'version' in test_results['testdef_metadata']:
+                            test_vcs_commit = test_results['testdef_metadata']['version']
+                    for test in test_results['test_results']:
+                        test_case = {}
+                        test_case['name'] = test['test_case_id']
+                        test_case['status'] = test['result'].upper()
+                        test_case['version'] = '1.0'
+                        test_cases.append(test_case)
+                    bundle_attributes = bundle_data['test_runs'][-1]['attributes']
+            if in_bundle_attributes(bundle_attributes, 'kernel.defconfig'):
+                print bundle_attributes['kernel.defconfig']
+            if in_bundle_attributes(bundle_attributes, 'target'):
+                board_instance = bundle_attributes['target']
+            if in_bundle_attributes(bundle_attributes, 'kernel.defconfig'):
+                kernel_defconfig = bundle_attributes['kernel.defconfig']
+                arch, kernel_defconfig_full = kernel_defconfig.split('-')
+                kernel_defconfig_base = ''.join(kernel_defconfig_full.split('+')[:1])
+                if kernel_defconfig_full == kernel_defconfig_base:
+                    kernel_defconfig_full = None
+            if in_bundle_attributes(bundle_attributes, 'kernel.version'):
+                kernel_version = bundle_attributes['kernel.version']
+            if in_bundle_attributes(bundle_attributes, 'device.tree'):
+                device_tree = bundle_attributes['device.tree']
+            if in_bundle_attributes(bundle_attributes, 'kernel.endian'):
+                kernel_endian = bundle_attributes['kernel.endian']
+            if in_bundle_attributes(bundle_attributes, 'platform.fastboot'):
+                fastboot = bundle_attributes['platform.fastboot']
+            if kernel_boot_time is None:
+                if in_bundle_attributes(bundle_attributes, 'kernel-boot-time'):
+                    kernel_boot_time = bundle_attributes['kernel-boot-time']
+            if in_bundle_attributes(bundle_attributes, 'kernel.tree'):
+                kernel_tree = bundle_attributes['kernel.tree']
+            if in_bundle_attributes(bundle_attributes, 'kernel-image'):
+                kernel_image = bundle_attributes['kernel-image']
+            if in_bundle_attributes(bundle_attributes, 'kernel-addr'):
+                kernel_addr = bundle_attributes['kernel-addr']
+            if in_bundle_attributes(bundle_attributes, 'initrd-addr'):
+                initrd_addr = bundle_attributes['initrd-addr']
+            if in_bundle_attributes(bundle_attributes, 'dtb-addr'):
+                dtb_addr = bundle_attributes['dtb-addr']
+            if in_bundle_attributes(bundle_attributes, 'dtb-append'):
+                dtb_append = bundle_attributes['dtb-append']
+            if in_bundle_attributes(bundle_attributes, 'boot_retries'):
+                boot_retries = int(bundle_attributes['boot_retries'])
+            if in_bundle_attributes(bundle_attributes, 'test.plan'):
+                test_plan = bundle_attributes['test.plan']
+            if in_bundle_attributes(bundle_attributes, 'test.set'):
+                test_set = bundle_attributes['test.set']
+            if in_bundle_attributes(bundle_attributes, 'test.suite'):
+                test_suite = bundle_attributes['test.suite']
+            if in_bundle_attributes(bundle_attributes, 'test.type'):
+                test_type = bundle_attributes['test.type']
+
+            # Create JSON format boot metadata
+            print 'Creating JSON format test metadata'
+            test_meta['version'] = '1.0'
+            test_meta['name'] = test_suite
+            if args.lab:
+                test_meta['lab_name'] = args.lab
+            else:
+                test_meta['lab_name'] = None
+            test_meta['arch'] = arch
+            test_meta['defconfig'] = kernel_defconfig_base
+            if kernel_defconfig_full is not None:
+                test_meta['defconfig_full'] = kernel_defconfig_full
+            if device_map[device_type][1]:
+                test_meta['mach'] = device_map[device_type][1]
+            test_meta['kernel'] = kernel_version
+            test_meta['job'] = kernel_tree
+            test_meta['board'] = platform_name
+            test_meta['test_set'] = {
+                'name': test_set,
+                'version': '1.0',
+                'definition_uri': test_def_uri,
+                'vcs_commit': test_vcs_commit,
+                'test_case': test_cases
+            }
+            json_file = '%s-%s.json' % (test_suite, platform_name)
+            write_json(json_file, results_directory, test_meta)
+            if args.lab and args.api and args.token:
+                print 'Sending test result to %s for %s' % (args.api, platform_name)
+                headers = {
+                    'Authorization': args.token,
+                    'Content-Type': 'application/json'
+                }
+                api_url = urlparse.urljoin(args.api, '/test-suite')
+                response = requests.post(api_url, data=json.dumps(test_meta), headers=headers)
+                print response.content
+
 def main(args):
     if args.boot:
         boot_report(args)
+    if args.test:
+        test_report(args)
     exit(0)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--boot", help="creates a kernel-ci boot report from a given json file")
+    parser.add_argument("--test", help="creates a kernel-ci test report from a given json file")
     parser.add_argument("--lab", help="lab id")
     parser.add_argument("--api", help="api url")
     parser.add_argument("--token", help="authentication token")

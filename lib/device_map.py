@@ -624,7 +624,8 @@ meson_gxbb_p200 = {'device_type': 'meson-gxbb-p200',
                'mach': 'amlogic'}
 
 r8a7795_salvator_x = {'device_type': 'r8a7795-salvator-x',
-               'templates': ['generic-arm64-dtb-kernel-ci-boot-template.json',
+               'templates': ['generic-arm64-uboot-image-dtb-ramdisk-template.jinja2',
+                             'generic-arm64-dtb-kernel-ci-boot-template.json',
                              'generic-arm64-dtb-kernel-ci-boot-be-template.json',
                              'generic-arm64-uboot-dtb-kernel-ci-cyclictest-template.json',
                              'generic-arm64-uboot-dtb-kernel-ci-hackbench-template.json',
